@@ -1,7 +1,4 @@
 ROSTemplateFormatVersion: '2015-09-01'
-Description:
-  en: Spring boot Demo
-  zh-cn:  Spring boot Demo
 Parameters:
   PayType:
     Type: String
@@ -56,6 +53,109 @@ Parameters:
             Fn::Equals:
               - ${PayType}
               - PostPaid
+  ZoneId:
+    Type: String
+    Label:
+      en: Zone ID
+      zh-cn: 可用区ID
+    AssociationProperty: ALIYUN::ECS::Instance::ZoneId
+  VpcOption:
+    Type: String
+    AllowedValues:
+      - NewVPC
+      - ExistingVPC
+    AssociationPropertyMetadata:
+      ValueLabelMapping:
+        NewVPC:
+          zh-cn: 新建专有网络
+          en: New VPC
+        ExistingVPC:
+          zh-cn: 已有专有网络
+          en: Existing VPC
+    Label:
+      en: Select Existing or New VPC
+      zh-cn: 选择已有/新建的专有网络
+    Required: true
+    Default: NewVPC
+  VpcCidrBlock:
+    Type: String
+    Label:
+      en: VPC CIDR IPv4 Block
+      zh-cn: 专有网络IPv4网段
+    Description:
+      zh-cn: VPC的ip地址段范围，<br>您可以使用以下的ip地址段或其子网:<br><font color='green'>[10.0.0.0/8]</font><br><font color='green'>[172.16.0.0/12]</font><br><font color='green'>[192.168.0.0/16]</font>
+      en: 'The ip address range of the VPC in the CidrBlock form; <br>You can use the following ip address ranges and their subnets: <br><font color=''green''>[10.0.0.0/8]</font><br><font color=''green''>[172.16.0.0/12]</font><br><font color=''green''>[192.168.0.0/16]</font>'
+    Default: 192.168.0.0/16
+    Required:
+      Fn::Equals:
+        - NewVPC
+        - ${VpcOption}
+    AssociationProperty: ALIYUN::VPC::VPC::CidrBlock
+    AssociationPropertyMetadata:
+      Visible:
+        Condition:
+          Fn::Equals:
+            - NewVPC
+            - ${VpcOption}
+  VSwitchCidrBlock:
+    Type: String
+    Label:
+      en: VSwitch CIDR Block
+      zh-cn: 交换机子网网段
+    Description:
+      zh-cn: 必须属于VPC的子网段。
+      en: Must belong to the subnet segment of VPC.
+    Default: 192.168.1.0/24
+    Required:
+      Fn::Equals:
+        - NewVPC
+        - ${VpcOption}
+    AssociationProperty: ALIYUN::VPC::VSwitch::CidrBlock
+    AssociationPropertyMetadata:
+      VpcCidrBlock: VpcCidrBlock
+      Visible:
+        Condition:
+          Fn::Equals:
+            - NewVPC
+            - ${VpcOption}
+  VpcId:
+    Type: String
+    Label:
+      en: VPC ID
+      zh-cn: 专有网络VPC实例ID
+    AssociationProperty: 'ALIYUN::ECS::VPC::VPCId'
+    Required:
+      Fn::Equals:
+        - ExistingVPC
+        - ${VpcOption}
+    Default: ''
+    AssociationPropertyMetadata:
+      AutoSelectFirst: true
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ExistingVPC
+            - ${VpcOption}
+  VSwitchId:
+    Type: String
+    Label:
+      en: VSwitch ID
+      zh-cn: 交换机实例ID
+    Default: ''
+    AssociationProperty: 'ALIYUN::ECS::VSwitch::VSwitchId'
+    Required:
+      Fn::Equals:
+        - ExistingVPC
+        - ${VpcOption}
+    AssociationPropertyMetadata:
+      AutoSelectFirst: true
+      VpcId: ${VpcId}
+      ZoneId: ${ZoneId}
+      Visible:
+        Condition:
+          Fn::Equals:
+            - ExistingVPC
+            - ${VpcOption}
   EcsInstanceType:
     Type: String
     Label:
@@ -64,9 +164,9 @@ Parameters:
     AssociationProperty: ALIYUN::ECS::Instance::InstanceType
     AssociationPropertyMetadata:
       InstanceChargeType: ${PayType}
-    AllowedValues:
-      - ecs.c6.large
-      - ecs.c6.2xlarge
+      Constraints:
+        InstanceTypeFamily:
+          - ecs.u1
   InstancePassword:
     NoEcho: true
     Type: String
@@ -83,24 +183,44 @@ Parameters:
     MinLength: 8
     MaxLength: 30
     AssociationProperty: ALIYUN::ECS::Instance::Password
-  ZoneId:
-    Type: String
-    Label:
-      en: Zone ID
-      zh-cn: 可用区ID
-    AssociationProperty: ALIYUN::ECS::Instance::ZoneId
+Conditions:
+  CreateVpcConditions:
+    Fn::Equals:
+      - NewVPC
+      - Ref: VpcOption
 Resources:
-  Vpc:
+  # 新建vpc
+  EcsVpc:
     Type: ALIYUN::ECS::VPC
+    Condition: CreateVpcConditions
     Properties:
-      CidrBlock: 192.168.0.0/16
+      VpcName:
+        Ref: ALIYUN::StackName
+      CidrBlock:
+        Ref: VpcCidrBlock
+  # 新建vswitch
+  EcsVSwitch:
+    Condition: CreateVpcConditions
+    Type: ALIYUN::ECS::VSwitch
+    Properties:
+      VSwitchName:
+        Ref: ALIYUN::StackName
+      VpcId:
+        Ref: EcsVpc
+      ZoneId:
+        Ref: ZoneId
+      CidrBlock:
+        Ref: VSwitchCidrBlock
   SecurityGroup:
     Type: ALIYUN::ECS::SecurityGroup
     Properties:
       SecurityGroupName:
         Ref: ALIYUN::StackName
       VpcId:
-        Ref: Vpc
+        Fn::If:
+          - CreateVpcConditions
+          - Ref: EcsVpc
+          - Ref: VpcId
       # 安全组入端口
       SecurityGroupIngress:
         - PortRange: 8080/8080
@@ -108,14 +228,6 @@ Resources:
           SourceCidrIp: 0.0.0.0/0
           IpProtocol: tcp
           NicType: internet
-  VSwitch:
-    Type: ALIYUN::ECS::VSwitch
-    Properties:
-      ZoneId:
-        Ref: ZoneId
-      VpcId:
-        Ref: Vpc
-      CidrBlock: 192.168.0.0/24
   InstanceGroup:
     Type: ALIYUN::ECS::InstanceGroup
     Properties:
@@ -127,14 +239,20 @@ Resources:
       Period:
         Ref: PayPeriod
       VpcId:
-        Ref: Vpc
+        Fn::If:
+          - CreateVpcConditions
+          - Ref: EcsVpc
+          - Ref: VpcId
       VSwitchId:
-        Ref: VSwitch
+        Fn::If:
+          - CreateVpcConditions
+          - Ref: EcsVSwitch
+          - Ref: VSwitchId
       SecurityGroupId:
         Ref: SecurityGroup
       ZoneId:
         Ref: ZoneId
-      ImageId: centos_7_8_x64_20G_alibase_20211130.vhd
+      ImageId: centos_7_9_x64_20G_alibase_20240403.vhd
       Password:
         Ref: InstancePassword
       InstanceType:
@@ -144,7 +262,7 @@ Resources:
       InternetMaxBandwidthOut: 1
       IoOptimized: optimized
       MaxAmount: 1
-  InstallPackage:
+  RunInstallCommand:
     Type: ALIYUN::ECS::RunCommand
     Properties:
       InstanceIds:
@@ -196,6 +314,11 @@ Metadata:
           default: 资源配置
       - Parameters:
           - ZoneId
+          - VpcOption
+          - VpcId
+          - VSwitchId
+          - VpcCidrBlock
+          - VSwitchCidrBlock
         Label:
           default: 可用区配置
 
